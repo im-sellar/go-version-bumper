@@ -4,6 +4,7 @@ Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
 	"os"
@@ -13,9 +14,13 @@ import (
 	"strings"
 )
 
-type PackageJSON map[string]interface{}
+const (
+	FeatureBranch = "feature"
+	FixBranch     = "fix"
+)
 
-// bumpCmd represents the bump command
+var ErrUnsupportedBranch = errors.New("unsupported branch name")
+
 var bumpCmd = &cobra.Command{
 	Use:   "bump",
 	Short: "Upgrade the version of the package.json and package-lock.json",
@@ -25,13 +30,18 @@ If the branch name begin with "feature" then the minor number will be upgraded.
 If the branch name begin with "fix" then the patch number will be upgraded.`,
 
 	Run: func(cmd *cobra.Command, args []string) {
-		err := updateVersionInFile("./package.json")
+		currentBranchName, err := getCurrentBranch()
+		if err != nil {
+			fmt.Printf("Error getting current git branch: %v\n", err)
+			return
+		}
+		err = updateVersionInFile("./package.json", currentBranchName)
 		if err != nil {
 			fmt.Printf("Error updating package.json: %v\n", err)
 			return
 		}
 
-		err = updateVersionInFile("./package-lock.json")
+		err = updateVersionInFile("./package-lock.json", currentBranchName)
 		if err != nil {
 			fmt.Printf("Error updating package-lock.json: %v\n", err)
 			return
@@ -39,16 +49,14 @@ If the branch name begin with "fix" then the patch number will be upgraded.`,
 
 		fmt.Println("Version updated successfully!")
 
-		// Check if the commit flag is set
 		commit, err := cmd.Flags().GetBool("commit")
 		if err != nil {
 			fmt.Printf("Error getting commit flag: %v\n", err)
 			return
 		}
 
-		// If the commit flag is set, commit the changes to git
 		if commit {
-			err = commitChanges()
+			err = commitChanges(currentBranchName)
 			if err != nil {
 				fmt.Printf("Error committing changes: %v\n", err)
 				return
@@ -59,67 +67,76 @@ If the branch name begin with "fix" then the patch number will be upgraded.`,
 	},
 }
 
-func updateVersionInFile(filePath string) error {
-	// Read the file
+func updateVersionInFile(filePath string, currentBranchName string) error {
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
-		return fmt.Errorf("error reading file: %v", err)
+		return fmt.Errorf("error reading file: %w", err)
 	}
 
-	// Get the current version
-	re := regexp.MustCompile(`"version": "([^"]+)"`)
-	matches := re.FindStringSubmatch(string(fileContent))
-	if len(matches) < 2 {
-		return fmt.Errorf("error getting current version")
-	}
-	currentVersion := matches[1]
-
-	currentBranchName, err := getCurrentBranch()
+	currentVersion, err := extractVersion(fileContent)
 	if err != nil {
-		return fmt.Errorf("error getting current git branch: %v", err)
+		return err
 	}
 
-	// Update the version based on the branch name
-	var newVersion string
-	if strings.Contains(currentBranchName, "feature") {
-		// Upgrade the minor number
-		newVersion = upgradeVersion(currentVersion, 1)
-	} else if strings.Contains(currentBranchName, "fix") {
-		// Upgrade the patch number
-		newVersion = upgradeVersion(currentVersion, 2)
-	} else {
-		return fmt.Errorf("branch name %s is not supported", currentBranchName)
-	}
-
-	// Update the file content with the new version
-	replaced := false
-	updatedFileContent := re.ReplaceAllStringFunc(string(fileContent), func(match string) string {
-		if replaced {
-			return match
-		}
-		replaced = true
-		return `"version": "` + newVersion + `"`
-	})
-
-	// Write the updated content to the file
-	err = os.WriteFile(filePath, []byte(updatedFileContent), 0644)
+	newVersion, err := getNewVersionBasedOnBranch(currentVersion, currentBranchName)
 	if err != nil {
-		return fmt.Errorf("error writing to file: %v", err)
+		return err
+	}
+
+	updatedContent, err := updateVersionInContent(fileContent, newVersion)
+	if err != nil {
+		return err
+	}
+
+	err = os.WriteFile(filePath, []byte(updatedContent), 0644)
+	if err != nil {
+		return fmt.Errorf("error writing to file: %w", err)
 	}
 
 	return nil
 }
 
+func extractVersion(content []byte) (string, error) {
+	re := regexp.MustCompile(`"version": "([^"]+)"`)
+	matches := re.FindStringSubmatch(string(content))
+	if len(matches) < 2 {
+		return "", errors.New("error getting current version")
+	}
+	return matches[1], nil
+}
+
+func getNewVersionBasedOnBranch(currentVersion string, currentBranchName string) (string, error) {
+	var index int
+	if strings.Contains(currentBranchName, FeatureBranch) {
+		index = 1
+	} else if strings.Contains(currentBranchName, FixBranch) {
+		index = 2
+	} else {
+		return "", ErrUnsupportedBranch
+	}
+
+	return upgradeVersion(currentVersion, index), nil
+}
+
+func updateVersionInContent(content []byte, newVersion string) (string, error) {
+	re := regexp.MustCompile(`"version": "([^"]+)"`)
+	replaced := false
+	return re.ReplaceAllStringFunc(string(content), func(match string) string {
+		if replaced {
+			return match
+		}
+		replaced = true
+		return `"version": "` + newVersion + `"`
+	}), nil
+}
+
 func upgradeVersion(version string, index int) string {
-	// Split the version string into major, minor, and patch components
 	components := strings.Split(version, ".")
 
-	// Ensure that the version string has at least three components
 	if len(components) < 3 {
 		return version
 	}
 
-	// Parse the major, minor, and patch components
 	major, err := strconv.Atoi(components[0])
 	if err != nil {
 		return version
@@ -133,23 +150,20 @@ func upgradeVersion(version string, index int) string {
 		return version
 	}
 
-	// Upgrade the version based on the specified index
 	switch index {
-	case 1: // Upgrade minor number
+	case 1:
 		minor++
 		patch = 0
-	case 2: // Upgrade patch number
+	case 2:
 		patch++
 	default:
 		return version
 	}
 
-	// Construct the upgraded version string
 	upgradedVersion := fmt.Sprintf("%d.%d.%d", major, minor, patch)
 	return upgradedVersion
 }
 
-// getCurrentBranch returns the name of the current Git branch
 func getCurrentBranch() (string, error) {
 	cmd := exec.Command("git", "branch", "--show-current")
 	output, err := cmd.Output()
@@ -159,23 +173,20 @@ func getCurrentBranch() (string, error) {
 	return string(output), nil
 }
 
-// commitChanges commits the changes to git
-func commitChanges() error {
-	// Add the changes to the staging area
+func commitChanges(currentBranchName string) error {
 	cmd := exec.Command("git", "add", "package.json", "package-lock.json")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	err := cmd.Run()
+
 	if err != nil {
 		return fmt.Errorf("error adding changes to staging area: %v", err)
 	}
 
-	currentBranchName, err := getCurrentBranch()
 	if err != nil {
 		return fmt.Errorf("error getting current git branch: %v", err)
 	}
 
-	// Commit the changes based on the branch name
 	if strings.Contains(currentBranchName, "feature") {
 		cmd = exec.Command("git", "commit", "-m", "feat: upgrade version", "--no-verify")
 		cmd.Stdout = os.Stdout
