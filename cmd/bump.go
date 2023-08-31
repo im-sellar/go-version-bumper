@@ -38,6 +38,24 @@ If the branch name begin with "fix" then the patch number will be upgraded.`,
 		}
 
 		fmt.Println("Version updated successfully!")
+
+		// Check if the commit flag is set
+		commit, err := cmd.Flags().GetBool("commit")
+		if err != nil {
+			fmt.Printf("Error getting commit flag: %v\n", err)
+			return
+		}
+
+		// If the commit flag is set, commit the changes to git
+		if commit {
+			err = commitChanges()
+			if err != nil {
+				fmt.Printf("Error committing changes: %v\n", err)
+				return
+			}
+
+			fmt.Println("Changes committed successfully!")
+		}
 	},
 }
 
@@ -56,21 +74,21 @@ func updateVersionInFile(filePath string) error {
 	}
 	currentVersion := matches[1]
 
-	branchName, err := getCurrentBranch()
+	currentBranchName, err := getCurrentBranch()
 	if err != nil {
 		return fmt.Errorf("error getting current git branch: %v", err)
 	}
 
 	// Update the version based on the branch name
 	var newVersion string
-	if strings.Contains(branchName, "feature") {
+	if strings.Contains(currentBranchName, "feature") {
 		// Upgrade the minor number
 		newVersion = upgradeVersion(currentVersion, 1)
-	} else if strings.Contains(branchName, "fix") {
+	} else if strings.Contains(currentBranchName, "fix") {
 		// Upgrade the patch number
 		newVersion = upgradeVersion(currentVersion, 2)
 	} else {
-		return fmt.Errorf("branch name %s is not supported", branchName)
+		return fmt.Errorf("branch name %s is not supported", currentBranchName)
 	}
 
 	// Update the file content with the new version
@@ -140,16 +158,44 @@ func getCurrentBranch() (string, error) {
 	}
 	return string(output), nil
 }
+
+// commitChanges commits the changes to git
+func commitChanges() error {
+	// Add the changes to the staging area
+	cmd := exec.Command("git", "add", "package.json", "package-lock.json")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("error adding changes to staging area: %v", err)
+	}
+
+	currentBranchName, err := getCurrentBranch()
+	if err != nil {
+		return fmt.Errorf("error getting current git branch: %v", err)
+	}
+
+	// Commit the changes based on the branch name
+	if strings.Contains(currentBranchName, "feature") {
+		cmd = exec.Command("git", "commit", "-m", "feat: upgrade version", "--no-verify")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	} else if strings.Contains(currentBranchName, "fix") {
+		cmd = exec.Command("git", "commit", "-m", "fix: upgrade version", "--no-verify")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	} else {
+		return fmt.Errorf("branch name %s is not supported", currentBranchName)
+	}
+
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("error committing changes: %v", err)
+	}
+
+	return nil
+}
 func init() {
 	rootCmd.AddCommand(bumpCmd)
-
-	// Here you will define your flags and configuration settings.
-
-	// Cobra supports Persistent Flags which will work for this command
-	// and all subcommands, e.g.:
-	// bumpCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-	// Cobra supports local flags which will only run when this command
-	// is called directly, e.g.:
-	// bumpCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	bumpCmd.Flags().BoolP("commit", "c", false, "Commit the changes to git")
 }
