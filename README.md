@@ -1,7 +1,3 @@
-Sure, here is a basic `README.md` file for your project:
-
----
-
 # Go-Version-Bumper CLI App
 
 This is a command-line application built using the Cobra library in Go. The application provides a `bump` command that upgrades the version of `package.json` and `package-lock.json` files and commits the changes to Git.
@@ -16,7 +12,7 @@ This is a command-line application built using the Cobra library in Go. The appl
 To use the `bump` command, navigate to the root directory of your project and run:
 
 ```
-go-version-bumper bump
+version-bumper bump
 ```
 
 This will upgrade the version of `package.json` and `package-lock.json` files based on the current Git branch name:
@@ -27,7 +23,7 @@ This will upgrade the version of `package.json` and `package-lock.json` files ba
 To commit the changes to Git, use the `--commit` or `-c` flag:
 
 ```
-go-version-bumper bump --commit
+version-bumper bump --commit
 ```
 
 This will add the modified `package.json` and `package-lock.json` files to the staging area and commit the changes to Git with a commit message based on the branch name:
